@@ -78,6 +78,13 @@
   @keyframes ping{0%{transform:scale(.4);opacity:.9;}
     100%{transform:scale(3.2);opacity:0;box-shadow:0 0 0 26px rgba(0,106,167,0);}}
   @media (prefers-reduced-motion: reduce){ .ping{animation-duration:.01s;} }
+
+  /* Toast */
+  .toast{position:fixed;left:50%;top:calc(env(safe-area-inset-top) + 150px);transform:translateX(-50%);
+    background:var(--ink);color:#fff;padding:11px 16px;border-radius:12px;font:500 13px/1.45 Inter,sans-serif;
+    box-shadow:var(--shadow);z-index:9;max-width:min(420px, calc(100% - 24px));text-align:center;
+    opacity:0;pointer-events:none;transition:opacity .25s;}
+  .toast.show{opacity:1;}
 </style>
 </head>
 <body>
@@ -97,6 +104,8 @@
   </div>
   <ul id="search-results"></ul>
 </div>
+
+<div class="toast" id="toast"></div>
 
 <details class="legend" open>
   <summary>Teckenförklaring <span class="chev">▾</span></summary>
@@ -228,6 +237,25 @@ const geo = new maplibregl.GeolocateControl({
 });
 map.addControl(geo, 'bottom-right');
 
+// Surface geolocation problems instead of failing silently.
+geo.on('error', err => {
+  if (err && err.code === 1)
+    toast('Platsåtkomst nekades. På iPhone: kontrollera att sidan körs över HTTPS, och att Inställningar → Integritet & säkerhet → Platstjänster (och Safari) tillåter plats.', 7000);
+  else
+    toast('Kunde inte hämta din position just nu. Försök igen utomhus med bra mottagning.', 5000);
+});
+// iOS Safari refuses geolocation entirely on non-HTTPS pages, with no prompt.
+if (!window.isSecureContext)
+  toast('Platsdelning fungerar bara över HTTPS. Öppna kartan via en https-adress (din webbhotell-URL), inte som en lokal fil.', 8000);
+
+function toast(msg, ms = 4500){
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => el.classList.remove('show'), ms);
+}
+
 const minorMarkers = []; // zone + amenity + path labels, hidden when zoomed far out
 
 map.on('load', () => {
@@ -261,7 +289,14 @@ map.on('load', () => {
   const b = venueBounds();
   if (b) map.fitBounds(b, { padding: 60, duration: 0, maxZoom: 18 });
 
-  setTimeout(() => { try { geo.trigger(); } catch(e){} }, 600);
+  // Auto-locate only if permission was already granted. This avoids "using up"
+  // the one-time iOS prompt — tapping the locate button is the reliable way to
+  // make Safari show the permission prompt.
+  if (navigator.permissions && navigator.permissions.query) {
+    navigator.permissions.query({ name: 'geolocation' })
+      .then(p => { if (p.state === 'granted') geo.trigger(); })
+      .catch(() => {});
+  }
 });
 
 function pill(at, icon, name, { strong=false, color=null } = {}){
